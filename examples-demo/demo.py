@@ -1,6 +1,11 @@
+import json
+from typing import List
+
+from pydantic import BaseModel
+
 from openai import OpenAI
 
-API_KEY = ""
+API_KEY = "f98bb610aedf4d0b824430f7e67ca363.Nt5DFPzp5DeUHvBZ"
 
 client = OpenAI(
     api_key=API_KEY,
@@ -17,13 +22,45 @@ client = OpenAI(
 #     input="How do I check if a Python object is an instance of a class?",
 # )
 
-# 通用的目前是当前写法
+
+class Step(BaseModel):
+    explanation: str
+    output: str
+
+
+class MathResponse(BaseModel):
+    steps: List[Step]
+    final_answer: str
+
+
+# 1. 在 System Prompt 中强烈要求输出 JSON，并给一个例子
+system_prompt = """You are a helpful math tutor.
+You MUST output your response in valid JSON format matching this schema:
+{
+  "steps": [{"explanation": "string", "output": "string"}],
+  "final_answer": "string"
+}
+Do not include markdown code blocks or any other text. Only JSON.
+"""
+
+# 2. 回退到普通的 create 方法
 response = client.chat.completions.create(
-    model="glm-4.6v", # 智谱目前常用的是 glm-4 
+    model="glm-4.6v",
     messages=[
-        {"role": "system", "content": "You are a coding assistant that talks like a pirate."},
-        {"role": "user", "content": "How do I check if a Python object is an instance of a class?"}
-    ]
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "solve 8x + 31 = 2"},
+    ],
 )
 
-print(response.choices[0].message.content)
+# 3. 获取纯文本并手动解析
+raw_content = response.choices[0].message.content
+try:
+    # 尝试把字符串解析成字典
+    data = json.loads(raw_content)
+
+    # 扔给 Pydantic 做最终的类型校验和实例化
+    math_response = MathResponse(**data)
+    print(math_response.steps)
+    print("answer: ", math_response.final_answer)
+except json.JSONDecodeError:
+    print("模型乱说话了，没有返回合法的 JSON！它的原始回复是：\n", raw_content)
