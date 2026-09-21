@@ -1,12 +1,15 @@
 import os
 import json
 import openai
-from dotenv import load_dotenv
+
 from pydantic import BaseModel
 from typing import List, Optional
 
-load_dotenv()
-client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+API_KEY = "f98bb610aedf4d0b824430f7e67ca363.Nt5DFPzp5DeUHvBZ"
+client = openai.OpenAI(
+    api_key=API_KEY,
+    base_url="https://open.bigmodel.cn/api/paas/v4/" )
+
 
 # ---------------------------------------------------------
 # 方式一：纯 Prompt 方式 + Few Shot (适用于所有模型)
@@ -35,10 +38,11 @@ FEW_SHOT_PROMPT = """
 {"customer_name": null, "phone_number": null, "issue_summary": "电脑无法开机"}
 """
 
+# pyrefly: ignore [implicit-any-parameter, unannotated-return]
 def extract_with_few_shot(text):
     print(f"\n[Few-Shot 方式提取] 正在处理文本: '{text}'")
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="glm-4.6v",
         messages=[
             {"role": "system", "content": FEW_SHOT_PROMPT},
             {"role": "user", "content": f"输入：'{text}'\n输出："}
@@ -51,7 +55,8 @@ def extract_with_few_shot(text):
     
     try:
         # 直接尝试解析 JSON
-        parsed_data = json.loads(result_str)
+        assert result_str is not None
+        parsed_data = json.loads(result_str)  # ty: ignore[invalid-argument-type]
         print("✅ 成功解析为字典:", parsed_data)
     except json.JSONDecodeError:
         print("❌ 解析 JSON 失败！模型没有输出合法的 JSON。")
@@ -67,10 +72,11 @@ class TicketInfo(BaseModel):
     phone_number: Optional[str]
     issue_summary: str
 
+# pyrefly: ignore [implicit-any-parameter, unannotated-return]
 def extract_with_structured_output(text):
     print(f"\n[Structured Output 方式提取] 正在处理文本: '{text}'")
     response = client.beta.chat.completions.parse(
-        model="gpt-4o-mini",
+        model="glm-4.6v",
         messages=[
             {"role": "system", "content": "你是一个精准的信息抽取机器人。"},
             {"role": "user", "content": text}
@@ -80,13 +86,14 @@ def extract_with_structured_output(text):
     
     # 返回的直接是解析好的 Python 对象！
     ticket = response.choices[0].message.parsed
-    print(f"✅ 解析成功: 姓名={ticket.customer_name}, 电话={ticket.phone_number}, 总结={ticket.issue_summary}")
+    assert ticket is not None
+    print(f"✅ 解析成功: 姓名={ticket.customer_name}, 电话={ticket.phone_number}, 总结={ticket.issue_summary}")  # ty: ignore[unresolved-attribute]
     print("序列化后的数据:", ticket.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
     test_text = "你好，我是王大锤。我刚刚不小心把水洒在键盘上了，现在几个按键失灵。我的手机号是 19988887777，请尽快安排维修。"
     
-    extract_with_few_shot(test_text)
+    # extract_with_few_shot(test_text)
     
     extract_with_structured_output(test_text)

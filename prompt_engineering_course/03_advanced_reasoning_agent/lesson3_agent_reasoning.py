@@ -1,10 +1,12 @@
 import os
 import json
 import openai
-from dotenv import load_dotenv
 
-load_dotenv()
-client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+API_KEY = "f98bb610aedf4d0b824430f7e67ca363.Nt5DFPzp5DeUHvBZ"
+client = openai.OpenAI(
+    api_key=API_KEY,
+    base_url="https://open.bigmodel.cn/api/paas/v4/" )
+
 
 # 模拟的本地工具集
 def get_user_schedule(date):
@@ -81,7 +83,7 @@ def run_agent(user_prompt):
     for step in range(5): # 最多允许思考 5 步，防止死循环
         print(f"\n--- 第 {step+1} 步思考 ---")
         response = client.chat.completions.create(
-            model="gpt-4o", # 复杂推理建议使用大模型
+            model="glm-4.6v", # 复杂推理建议使用大模型
             messages=messages,
             tools=tools,
             tool_choice="auto"
