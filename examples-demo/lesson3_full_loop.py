@@ -1,130 +1,88 @@
+"""
+Lesson 3: 接发球完整闭环 —— 本地执行工具并将结果回塞给大模型 (规范单轮全流程)
+"""
+import os
 import json
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from openai import pydantic_function_tool
 
-
-API_KEY = "f98bb610aedf4d0b824430f7e67ca363.Nt5DFPzp5DeUHvBZ"
-
 client = OpenAI(
-    api_key=API_KEY,
-    base_url="https://open.bigmodel.cn/api/paas/v4/",
+    api_key=os.environ.get("OPENAI_API_KEY", "your-api-key-here"),
+    base_url=os.environ.get("OPENAI_BASE_URL", None)
 )
+model_name = os.environ.get("OPENAI_MODEL_NAME", "gpt-4o-mini")
 
-
-
-# ----------------- 1. 定义你的本地业务逻辑 -----------------
+# ----------------- 1. 定义本地真实业务逻辑 -----------------
 def my_local_weather_api(location: str) -> str:
-    """这是一个模拟的本地函数，实际业务中这里可以调第三方接口或查数据库"""
-    print(f"\n[本地系统] 正在查询 {location} 的天气...")
+    """这是一个模拟的本地系统接口，在实际生产中可调用第三方 RESTful API 或查询数据库"""
+    print(f"\n⚙️ [本地系统] 正在查询 {location} 的天气数据...")
     if "北京" in location:
-        return '{"temp": 15, "condition": "多云，有微风"}'
+        return json.dumps({"temp": 18, "condition": "多云，有微风", "air_quality": "优"}, ensure_ascii=False)
+    elif "上海" in location:
+        return json.dumps({"temp": 24, "condition": "晴朗温暖", "air_quality": "良"}, ensure_ascii=False)
     else:
-        return '{"temp": 25, "condition": "晴朗"}'
+        return json.dumps({"temp": 22, "condition": "晴转多云", "air_quality": "优"}, ensure_ascii=False)
 
 # ----------------- 2. 准备传给模型的 Tool Schema -----------------
 class WeatherParams(BaseModel):
-    location: str = Field(description="城市名称")
+    location: str = Field(description="城市名称，例如：北京、上海")
 
 tools = [
     pydantic_function_tool(model=WeatherParams, name="get_weather", description="获取某地的当前天气")
 ]
 
-# 初始化对话历史
-messages = [{"role": "user", "content": "请问北京和上海现在的天气分别怎么样？"}]
-
 # ----------------- 3. 第一轮对话：大模型下达指令 -----------------
-print("-> 发送用户提问给大模型...")
-# pyrefly: ignore [no-matching-overload]
-response = client.chat.completions.create(
-    model="glm-4.6v",
-    messages= messages,  # ty: ignore[invalid-argument-type]
-    tools=tools
-)
-assistant_msg = response.choices[0].message
+messages = [{"role": "user", "content": "请问北京和上海现在的天气分别怎么样？"}]
+print("-> 发送用户提问给大模型:", messages[0]["content"])
 
-print('第一次返回消息！--',assistant_msg)
-
-# 必须把大模型的这条“调用指令”消息，也原封不动追加到历史记录里！
-messages.append(assistant_msg)
-
-# ----------------- 4. 拦截指令并在本地执行 -----------------
-if assistant_msg.tool_calls:
-    # 现代的大模型支持并行工具调用 (Parallel Tool Calling)，所以它可能会一次性返回多个调用
-    for tool_call in assistant_msg.tool_calls:
-        print(f"<- 大模型请求调用函数: {tool_call.function.name}")
-        
-        # 提取模型生成的参数（它是一个 JSON 字符串，我们需要 loads）
-        args = json.loads(tool_call.function.arguments)
-        
-        # 这里进行路由，根据函数名调用不同的本地 Python 函数
-        if tool_call.function.name == "get_weather":
-            # 真正的执行本地逻辑
-            result = my_local_weather_api(args["location"])
-            
-            # 【核心步骤】将本地执行结果，封装成一个 role="tool" 的消息塞回记录中
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id, # 必须带上 id，告诉模型这是对应哪个指令的回复
-                "content": result             # 必须是字符串
-            })
-            print(f"-> 本地执行完毕，把结果发回给大模型：{result}")
-
-# ----------------- 5. 第二轮对话：大模型总结并回复人类 -----------------
-if assistant_msg.tool_calls:    
-    print("\n-> 发送工具结果给大模型，等待最终总结...")
-    # pyrefly: ignore [no-matching-overload]
-    final_response = client.chat.completions.create(
-        model="glm-4.6v",
-        # pyrefly: ignore [bad-argument-type]
-        messages=messages,  # ty: ignore[invalid-argument-type]
-        # 这次不用带 tools 也可以了，因为它只是做文字总结
-        tools= tools
-
+try:
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+        tools=tools
     )
-    print("\n🤖 AI 最终回复: ")
-    print(final_response.choices[0].message.content)
-    print('第二次返回消息！--',final_response.choices[0].message)
-    assistant_last_msg = final_response.choices[0].message
-    messages.append(assistant_last_msg)
+    assistant_msg = response.choices[0].message
 
+    # 【核心规范 1】必须把大模型的这条调用指令原封不动追加到历史记录中！
+    messages.append(assistant_msg)
+
+    # ----------------- 4. 拦截指令并在本地执行 -----------------
+    if assistant_msg.tool_calls:
+        print(f"\n<- 大模型下达了 {len(assistant_msg.tool_calls)} 个工具调用指令 (并行调用)")
         
-        # ----------------- 6. 拦截指令并在本地执行 -----------------
-    if assistant_last_msg.tool_calls:
-    # 现代的大模型支持并行工具调用 (Parallel Tool Calling)，所以它可能会一次性返回多个调用
-      for tool_call in assistant_last_msg.tool_calls:
-        print(f"<- 大模型请求调用函数1: {tool_call.function.name}")
-        
-        # 提取模型生成的参数（它是一个 JSON 字符串，我们需要 loads）
-        args = json.loads(tool_call.function.arguments)
-        
-        # 这里进行路由，根据函数名调用不同的本地 Python 函数
-        if tool_call.function.name == "get_weather":
-            # 真正的执行本地逻辑
-            result = my_local_weather_api(args["location"])
+        for tool_call in assistant_msg.tool_calls:
+            print(f"   * 准备执行: {tool_call.function.name} ID: {tool_call.id}")
+            args = json.loads(tool_call.function.arguments)
             
-            # 【核心步骤】将本地执行结果，封装成一个 role="tool" 的消息塞回记录中
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id, # 必须带上 id，告诉模型这是对应哪个指令的回复
-                "content": result             # 必须是字符串
-            })
-            print(f"-> 本地执行完毕，把结果发回给大模型1：{result}")    
+            # 根据函数名派发执行
+            if tool_call.function.name == "get_weather":
+                result = my_local_weather_api(args["location"])
+                
+                # 【核心规范 2】将执行结果以 role="tool" 封装，并严格附带 tool_call_id
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result
+                })
+                print(f"   -> 已将本地执行结果装配回对话上下文: {result}")
 
-            if assistant_msg.tool_calls:    
-               print("\n-> 发送工具结果给大模型，等待最终总结11..")
-                # pyrefly: ignore [no-matching-overload]
-            final_response = client.chat.completions.create(
-                model="glm-4.6v",
-                    # pyrefly: ignore [bad-argument-type]
-                    messages=messages,  # ty: ignore[invalid-argument-type]
-                    # 这次不用带 tools 也可以了，因为它只是做文字总结
-                    tools= tools
+        # ----------------- 5. 第二轮对话：大模型总结并回复人类 -----------------
+        print("\n-> 发送工具结果给大模型，等待模型最终总结回复...")
+        final_response = client.chat.completions.create(
+            model=model_name,
+            messages=messages
+        )
+        final_text = final_response.choices[0].message.content
+        print("\n🤖 AI 最终回复:")
+        print("-" * 50)
+        print(final_text)
+        print("-" * 50)
+    else:
+        print("\n大模型未调用工具，直接回复：", assistant_msg.content)
 
-                )
-            print("\n🤖 AI 最终回复333: ")
-            print(final_response.choices[0].message.content)
-     
-    
-
-            
+except Exception as e:
+    print(f"\n⚠️ 运行出错（请检查 API 密钥或网络环境）：{e}")
+    print("💡 提示：可通过设置环境变量运行，例如：")
+    print("   export OPENAI_API_KEY='sk-...'")
+    print("   export OPENAI_MODEL_NAME='gpt-4o-mini'")

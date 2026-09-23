@@ -1,20 +1,39 @@
+"""
+Lesson 1: 使用 Pydantic 定义现代化 Tool Schema (含标准模式与严格模式 Strict Mode 对比)
+"""
+import json
 from pydantic import BaseModel, Field
 from openai import pydantic_function_tool
 
-# 1. 定义函数参数的数据结构 (BaseModel)
+# 1. 定义工具参数模型
 class WeatherParams(BaseModel):
-    # 这里的 docstring 和 Field(description) 会直接被大模型看到，用来理解怎么传参！
-    location: str = Field(description="城市名称，例如：北京, 上海")
-    unit: str = Field(default="c", description="温度单位，'c' 表示摄氏度，'f' 表示华氏度")
-
-# 2. 将它转换为大模型认识的 tool 格式
-my_tools = [
-    pydantic_function_tool(
-        model=WeatherParams, 
-        name="get_current_weather", # 给大模型调用的函数名
-        description="当你需要获取任何地方的天气信息时，请调用此工具。"
+    location: str = Field(
+        description="需要查询天气的城市名称，例如：北京、上海、深圳、Tokyo"
     )
-]
+    unit: str = Field(
+        default="celsius",
+        description="温度单位：'celsius' (摄氏度) 或 'fahrenheit' (华氏度)"
+    )
 
-print("生成的 Tool Schema:")
-print(my_tools)
+# 2. 生成标准 Tool Schema (供 OpenAI Chat Completions 使用)
+standard_tool = pydantic_function_tool(
+    model=WeatherParams,
+    name="get_current_weather",
+    description="当用户询问指定城市的当前天气情况时调用此工具。"
+)
+
+print("=" * 60)
+print("📌 [1] 生成的标准 Tool JSON Schema:")
+print(json.dumps(standard_tool, ensure_ascii=False, indent=2))
+
+# 3. 生成 Strict Mode (严格模式) Tool Schema
+# 严格模式在 OpenAI 模型端保证 100% 遵循 JSON Schema，杜绝字段缺失或类型错乱
+strict_tool = pydantic_function_tool(
+    model=WeatherParams,
+    name="get_current_weather_strict",
+    description="获取指定城市的当前天气（严格模式，100% 杜绝参数幻觉）"
+)
+
+print("=" * 60)
+print("📌 [2] Tool 定义成功！可直接作为 tools=[...] 传入 client.chat.completions.create")
+print("=" * 60)
